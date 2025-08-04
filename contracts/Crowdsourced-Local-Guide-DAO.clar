@@ -5,6 +5,8 @@
 (define-constant ERR-INSUFFICIENT-TOKENS (err u104))
 (define-constant ERR-INVALID-CATEGORY (err u105))
 (define-constant ERR-INSUFFICIENT-REPUTATION (err u106))
+(define-constant ERR-INVALID-RATING (err u107))
+(define-constant ERR-ALREADY-RATED (err u108))
 
 (define-fungible-token local-guide-token)
 
@@ -24,6 +26,9 @@
         category: uint,
         verified: bool,
         votes: uint,
+        rating-sum: uint,
+        rating-count: uint,
+        avg-rating: uint,
         created-at: uint,
     }
 )
@@ -67,6 +72,18 @@
         locations-verified: uint,
         votes-received: uint,
         last-updated: uint,
+    }
+)
+
+(define-map location-ratings
+    {
+        user: principal,
+        location-id: uint,
+    }
+    {
+        rating: uint,
+        weight: uint,
+        created-at: uint,
     }
 )
 
@@ -119,6 +136,16 @@
 
 (define-read-only (get-balance (account principal))
     (ft-get-balance local-guide-token account)
+)
+
+(define-read-only (get-location-rating
+        (user principal)
+        (location-id uint)
+    )
+    (map-get? location-ratings {
+        user: user,
+        location-id: location-id,
+    })
 )
 
 (define-private (get-user-level (user principal))
@@ -264,6 +291,9 @@
             category: category-id,
             verified: false,
             votes: u0,
+            rating-sum: u0,
+            rating-count: u0,
+            avg-rating: u0,
             created-at: burn-block-height,
         })
         (map-set category-locations {
@@ -352,4 +382,55 @@
         (amount uint)
     )
     (ft-transfer? local-guide-token amount tx-sender recipient)
+)
+
+(define-public (rate-location
+        (location-id uint)
+        (rating uint)
+    )
+    (let (
+            (location (unwrap! (get-location location-id) ERR-NOT-FOUND))
+            (existing-rating (get-location-rating tx-sender location-id))
+            (user-level (get-user-level tx-sender))
+            (level-info (unwrap! (get-reputation-level user-level) ERR-NOT-FOUND))
+            (weight (+ u1 user-level))
+            (weighted-rating (* rating weight))
+            (current-sum (get rating-sum location))
+            (current-count (get rating-count location))
+        )
+        (asserts! (and (>= rating u1) (<= rating u5)) ERR-INVALID-RATING)
+        (asserts! (is-none existing-rating) ERR-ALREADY-RATED)
+        (asserts! (>= (get-balance tx-sender) (var-get min-tokens-to-vote))
+            ERR-INSUFFICIENT-TOKENS
+        )
+        (map-set location-ratings {
+            user: tx-sender,
+            location-id: location-id,
+        } {
+            rating: rating,
+            weight: weight,
+            created-at: burn-block-height,
+        })
+        (let (
+                (new-sum (+ current-sum weighted-rating))
+                (new-count (+ current-count weight))
+                (new-avg (/ new-sum new-count))
+            )
+            (map-set locations { location-id: location-id }
+                (merge location {
+                    rating-sum: new-sum,
+                    rating-count: new-count,
+                    avg-rating: new-avg,
+                })
+            )
+            (unwrap! (update-user-reputation tx-sender u3 u0 u0 u0)
+                ERR-NOT-AUTHORIZED
+            )
+            (unwrap!
+                (mint-tokens tx-sender (* u3 (get token-multiplier level-info)))
+                ERR-NOT-AUTHORIZED
+            )
+            (ok true)
+        )
+    )
 )
