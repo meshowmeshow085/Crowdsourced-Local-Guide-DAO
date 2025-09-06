@@ -148,6 +148,168 @@
     })
 )
 
+(define-private (abs-int (value int))
+    (if (< value 0)
+        (* value -1)
+        value
+    )
+)
+
+(define-read-only (calculate-distance
+        (lat1 int)
+        (lon1 int)
+        (lat2 int)
+        (lon2 int)
+    )
+    (let (
+            (dlat (abs-int (- lat2 lat1)))
+            (dlon (abs-int (- lon2 lon1)))
+            (distance-squared (+ (* dlat dlat) (* dlon dlon)))
+        )
+        distance-squared
+    )
+)
+
+(define-read-only (is-location-within-radius
+        (center-lat int)
+        (center-lon int)
+        (target-lat int)
+        (target-lon int)
+        (radius-squared uint)
+    )
+    (let ((distance-sq (calculate-distance center-lat center-lon target-lat target-lon)))
+        (<= (to-uint distance-sq) radius-squared)
+    )
+)
+
+(define-read-only (discover-locations-in-radius
+        (center-lat int)
+        (center-lon int)
+        (radius-squared uint)
+        (start-id uint)
+        (limit uint)
+    )
+    (fold check-location-in-radius
+        (list
+            start-id             (+ start-id u1)
+            (+ start-id u2)             (+ start-id u3)
+            (+ start-id u4)
+            (+ start-id u5)             (+ start-id u6)             (+ start-id u7)
+            (+ start-id u8)             (+ start-id u9)
+        ) {
+        center-lat: center-lat,
+        center-lon: center-lon,
+        radius-squared: radius-squared,
+        results: (list),
+        count: u0,
+        limit: limit,
+    })
+)
+
+(define-private (check-location-in-radius
+        (location-id uint)
+        (acc {
+            center-lat: int,
+            center-lon: int,
+            radius-squared: uint,
+            results: (list 10 uint),
+            count: uint,
+            limit: uint,
+        })
+    )
+    (let ((location-opt (get-location location-id)))
+        (if (and
+                (< (get count acc) (get limit acc))
+                (is-some location-opt)
+            )
+            (let (
+                    (location (unwrap-panic location-opt))
+                    (within-radius (is-location-within-radius (get center-lat acc)
+                        (get center-lon acc) (get latitude location)
+                        (get longitude location) (get radius-squared acc)
+                    ))
+                )
+                (if within-radius
+                    (merge acc {
+                        results: (unwrap-panic (as-max-len? (append (get results acc) location-id) u10)),
+                        count: (+ (get count acc) u1),
+                    })
+                    acc
+                )
+            )
+            acc
+        )
+    )
+)
+
+(define-read-only (discover-verified-locations
+        (center-lat int)
+        (center-lon int)
+        (radius-squared uint)
+        (min-rating uint)
+        (start-id uint)
+        (limit uint)
+    )
+    (fold check-verified-location-in-radius
+        (list
+            start-id             (+ start-id u1)
+            (+ start-id u2)             (+ start-id u3)
+            (+ start-id u4)
+            (+ start-id u5)             (+ start-id u6)
+            (+ start-id u7)
+            (+ start-id u8)             (+ start-id u9)
+        ) {
+        center-lat: center-lat,
+        center-lon: center-lon,
+        radius-squared: radius-squared,
+        min-rating: min-rating,
+        results: (list),
+        count: u0,
+        limit: limit,
+    })
+)
+
+(define-private (check-verified-location-in-radius
+        (location-id uint)
+        (acc {
+            center-lat: int,
+            center-lon: int,
+            radius-squared: uint,
+            min-rating: uint,
+            results: (list 10 uint),
+            count: uint,
+            limit: uint,
+        })
+    )
+    (let ((location-opt (get-location location-id)))
+        (if (and
+                (< (get count acc) (get limit acc))
+                (is-some location-opt)
+            )
+            (let (
+                    (location (unwrap-panic location-opt))
+                    (within-radius (is-location-within-radius (get center-lat acc)
+                        (get center-lon acc) (get latitude location)
+                        (get longitude location) (get radius-squared acc)
+                    ))
+                    (meets-criteria (and
+                        (get verified location)
+                        (>= (get avg-rating location) (get min-rating acc))
+                    ))
+                )
+                (if (and within-radius meets-criteria)
+                    (merge acc {
+                        results: (unwrap-panic (as-max-len? (append (get results acc) location-id) u10)),
+                        count: (+ (get count acc) u1),
+                    })
+                    acc
+                )
+            )
+            acc
+        )
+    )
+)
+
 (define-private (get-user-level (user principal))
     (let ((reputation (get-user-reputation user)))
         (if (is-some reputation)
