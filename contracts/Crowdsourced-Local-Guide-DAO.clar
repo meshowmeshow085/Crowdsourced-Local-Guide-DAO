@@ -7,6 +7,8 @@
 (define-constant ERR-INSUFFICIENT-REPUTATION (err u106))
 (define-constant ERR-INVALID-RATING (err u107))
 (define-constant ERR-ALREADY-RATED (err u108))
+(define-constant ERR-CANNOT-TIP-SELF (err u109))
+(define-constant ERR-INVALID-TIP-AMOUNT (err u110))
 
 (define-fungible-token local-guide-token)
 
@@ -97,6 +99,36 @@
     }
 )
 
+(define-map location-tips
+    { location-id: uint }
+    {
+        total-tips: uint,
+        tip-count: uint,
+    }
+)
+
+(define-map user-tip-stats
+    { user: principal }
+    {
+        tips-sent: uint,
+        tips-received: uint,
+        total-sent-amount: uint,
+        total-received-amount: uint,
+    }
+)
+
+(define-map tip-history
+    {
+        tipper: principal,
+        location-id: uint,
+    }
+    {
+        total-amount: uint,
+        tip-count: uint,
+        last-tip-at: uint,
+    }
+)
+
 (define-read-only (get-location (location-id uint))
     (map-get? locations { location-id: location-id })
 )
@@ -144,6 +176,24 @@
     )
     (map-get? location-ratings {
         user: user,
+        location-id: location-id,
+    })
+)
+
+(define-read-only (get-location-tips (location-id uint))
+    (map-get? location-tips { location-id: location-id })
+)
+
+(define-read-only (get-user-tip-stats (user principal))
+    (map-get? user-tip-stats { user: user })
+)
+
+(define-read-only (get-tip-history
+        (tipper principal)
+        (location-id uint)
+    )
+    (map-get? tip-history {
+        tipper: tipper,
         location-id: location-id,
     })
 )
@@ -594,5 +644,74 @@
             )
             (ok true)
         )
+    )
+)
+
+(define-public (tip-location
+        (location-id uint)
+        (amount uint)
+    )
+    (let (
+            (location (unwrap! (get-location location-id) ERR-NOT-FOUND))
+            (creator (get creator location))
+            (tipper-stats (default-to {
+                tips-sent: u0,
+                tips-received: u0,
+                total-sent-amount: u0,
+                total-received-amount: u0,
+            }
+                (get-user-tip-stats tx-sender)
+            ))
+            (creator-stats (default-to {
+                tips-sent: u0,
+                tips-received: u0,
+                total-sent-amount: u0,
+                total-received-amount: u0,
+            }
+                (get-user-tip-stats creator)
+            ))
+            (location-tip-data (default-to {
+                total-tips: u0,
+                tip-count: u0,
+            }
+                (get-location-tips location-id)
+            ))
+            (history (default-to {
+                total-amount: u0,
+                tip-count: u0,
+                last-tip-at: u0,
+            }
+                (get-tip-history tx-sender location-id)
+            ))
+        )
+        (asserts! (> amount u0) ERR-INVALID-TIP-AMOUNT)
+        (asserts! (not (is-eq tx-sender creator)) ERR-CANNOT-TIP-SELF)
+        (asserts! (>= (get-balance tx-sender) amount) ERR-INSUFFICIENT-TOKENS)
+        (unwrap! (transfer-tokens creator amount) ERR-NOT-AUTHORIZED)
+        (map-set location-tips { location-id: location-id } {
+            total-tips: (+ (get total-tips location-tip-data) amount),
+            tip-count: (+ (get tip-count location-tip-data) u1),
+        })
+        (map-set user-tip-stats { user: tx-sender } {
+            tips-sent: (+ (get tips-sent tipper-stats) u1),
+            tips-received: (get tips-received tipper-stats),
+            total-sent-amount: (+ (get total-sent-amount tipper-stats) amount),
+            total-received-amount: (get total-received-amount tipper-stats),
+        })
+        (map-set user-tip-stats { user: creator } {
+            tips-sent: (get tips-sent creator-stats),
+            tips-received: (+ (get tips-received creator-stats) u1),
+            total-sent-amount: (get total-sent-amount creator-stats),
+            total-received-amount: (+ (get total-received-amount creator-stats) amount),
+        })
+        (map-set tip-history {
+            tipper: tx-sender,
+            location-id: location-id,
+        } {
+            total-amount: (+ (get total-amount history) amount),
+            tip-count: (+ (get tip-count history) u1),
+            last-tip-at: burn-block-height,
+        })
+        (ok true)
     )
 )
