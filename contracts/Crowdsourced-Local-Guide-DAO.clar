@@ -9,6 +9,8 @@
 (define-constant ERR-ALREADY-RATED (err u108))
 (define-constant ERR-CANNOT-TIP-SELF (err u109))
 (define-constant ERR-INVALID-TIP-AMOUNT (err u110))
+(define-constant ERR-ALREADY-BOOKMARKED (err u111))
+(define-constant ERR-NOT-BOOKMARKED (err u112))
 
 (define-fungible-token local-guide-token)
 
@@ -129,6 +131,14 @@
     }
 )
 
+(define-map user-bookmarks
+    {
+        user: principal,
+        location-id: uint,
+    }
+    { bookmarked: bool }
+)
+
 (define-read-only (get-location (location-id uint))
     (map-get? locations { location-id: location-id })
 )
@@ -196,6 +206,104 @@
         tipper: tipper,
         location-id: location-id,
     })
+)
+
+(define-read-only (get-user-bookmark
+        (user principal)
+        (location-id uint)
+    )
+    (map-get? user-bookmarks {
+        user: user,
+        location-id: location-id,
+    })
+)
+
+(define-read-only (get-user-bookmarks
+        (user principal)
+        (start-id uint)
+        (limit uint)
+    )
+    (let ((result (fold collect-user-bookmark
+            (list
+                start-id
+                (+ start-id u1)
+                (+ start-id u2)
+                (+ start-id u3)
+                (+ start-id u4)
+                (+ start-id u5)
+                (+ start-id u6)
+                (+ start-id u7)
+                (+ start-id u8)
+                (+ start-id u9)
+            ) {
+            user: user,
+            results: (list),
+            count: u0,
+            limit: limit,
+        })))
+        (ok (get results result))
+    )
+)
+
+(define-private (collect-user-bookmark
+        (location-id uint)
+        (acc {
+            user: principal,
+            results: (list 10 uint),
+            count: uint,
+            limit: uint,
+        })
+    )
+    (let ((bookmark (map-get? user-bookmarks {
+            user: (get user acc),
+            location-id: location-id,
+        })))
+        (if (and
+                (< (get count acc) (get limit acc))
+                (is-some bookmark)
+            )
+            (merge acc {
+                results: (unwrap-panic (as-max-len? (append (get results acc) location-id) u10)),
+                count: (+ (get count acc) u1),
+            })
+            acc
+        )
+    )
+)
+
+(define-public (bookmark-location (location-id uint))
+    (begin
+        (unwrap! (get-location location-id) ERR-NOT-FOUND)
+        (asserts!
+            (is-none (map-get? user-bookmarks {
+                user: tx-sender,
+                location-id: location-id,
+            }))
+            ERR-ALREADY-BOOKMARKED
+        )
+        (map-set user-bookmarks {
+            user: tx-sender,
+            location-id: location-id,
+        } { bookmarked: true }
+        )
+        (ok true)
+    )
+)
+
+(define-public (unbookmark-location (location-id uint))
+    (let ((bookmark (map-get? user-bookmarks {
+            user: tx-sender,
+            location-id: location-id,
+        })))
+        (begin
+            (asserts! (is-some bookmark) ERR-NOT-BOOKMARKED)
+            (map-delete user-bookmarks {
+                user: tx-sender,
+                location-id: location-id,
+            })
+            (ok true)
+        )
+    )
 )
 
 (define-private (abs-int (value int))
